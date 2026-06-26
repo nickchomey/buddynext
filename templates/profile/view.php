@@ -8,6 +8,10 @@
  * `parts/nav-metrics.php`), the shared primary tab bar (`parts/nav-bar.php`,
  * fed by the unified Nav registry), and `parts/profile-tab-panel.php`.
  *
+ * Profile tabs use full URL navigation (via `bn_profile_action`), not
+ * reactive in-page switching. Each tab has its own URL (e.g. `/members/{slug}/posts/`)
+ * and only the active tab's data is loaded server-side.
+ *
  * Context variables expected (set by PageRouter before include):
  *   $user_id  int  The ID of the profile being viewed.
  *
@@ -71,18 +75,17 @@ $follower_count = $bn_follow_svc->follower_count( $user_id );
 $bn_post_svc = buddynext_service( 'post_service' );
 
 // --- Social-graph member lists for the in-page Followers / Following /
-// Connections tabs (rendered inside the same profile shell, not as separate
-// bare pages). Capped for the panel; the count chip shows the true total.
+// Connections tabs. These are now loaded conditionally after the active tab
+// is determined from the URL (see the "Tab-specific data loading" section
+// below). Capped for the panel; the count chip shows the true total.
 $bn_pf_ids_to_users   = static function ( array $ids ): array {
 	return array_values( array_filter( array_map( static fn( $id ) => get_userdata( (int) $id ), $ids ) ) );
 };
-$follower_users       = $bn_pf_ids_to_users( array_slice( $bn_follow_svc->followers( $user_id ), 0, 60 ) );
-$following_users      = $bn_pf_ids_to_users( array_slice( $bn_follow_svc->following( $user_id ), 0, 60 ) );
-$connection_users     = $bn_pf_ids_to_users( $bn_conn_svc->connections( $user_id, 60, 0 ) );
-$pending_follow_users = $is_own_profile ? $bn_pf_ids_to_users( $bn_follow_svc->pending_followers( $user_id ) ) : array();
-// Incoming connection (friend) requests — owner-only; the requester accepts/declines
-// from the Connections tab. Mirrors the pending-follow-requests inbox.
-$pending_connection_users = $is_own_profile ? $bn_pf_ids_to_users( $bn_conn_svc->pending_received( $user_id, 60, 0 ) ) : array();
+$follower_users       = array();
+$following_users      = array();
+$connection_users     = array();
+$pending_follow_users = array();
+$pending_connection_users = array();
 
 // --- Social graph state (viewer vs. this profile) -------------------------
 $is_following        = false;
@@ -173,52 +176,17 @@ if ( '' === $profile_slug ) {
 	$profile_slug = $profile_user instanceof WP_User ? $profile_user->user_nicename : 'user-' . $user_id;
 }
 
-// --- Tab-panel data sets --------------------------------------------------
-// All rows come from the service layer (same methods the REST controllers call)
-// — recent posts through the privacy-aware profile feed (canonically hydrated),
-// replies/likes through PostService, so the panels never touch the DB directly.
-//
-// Recent posts: the profile feed applies the private-account gate + per-post
-// privacy, then hydrates each row through PostService::hydrate(). For a
-// non-permitted viewer it returns an empty set, so the Posts panel shows its
-// existing empty-state copy.
-$bn_feed_svc  = buddynext_service( 'feed' );
-$recent_posts = $bn_feed_svc->profile_feed( $user_id, $current_user_id, null, 10 )['items'];
-
-// Replies: service rows are associative; the Replies panel reads them as objects
-// (->object_id / ->content / ->post_author_name), so re-cast to objects here
-// (the panel markup is shared and stays untouched).
-$user_replies = array_map(
-	static fn( array $r ): object => (object) $r,
-	$bn_post_svc->user_replies( $user_id, 20 )
-);
-
-// Likes: already hydrated arrays (post-card consumes arrays).
-$user_likes = $bn_post_svc->user_liked_posts( $user_id, 20 );
-
-// Scheduled posts are private to the author, so the panel + its data are owner-only.
+// --- Tab-panel data sets (initialized empty; loaded per-tab below) --------
+// The actual data fetching is moved after active-tab determination so only
+// the current tab's data is queried (full URL navigation pattern).
+$bn_feed_svc    = buddynext_service( 'feed' );
+$recent_posts   = array();
+$user_replies   = array();
+$user_likes     = array();
 $scheduled_posts = array();
-if ( $is_own_profile ) {
-	$scheduled_posts = $bn_post_svc->user_scheduled_posts( $user_id, 20 );
-}
-
-// Profile media gallery — resolved from WPMediaVerse at the API level (its
-// media live in mvs_media_index, not wp_posts). $user_media holds ordered
-// media ids; the panel renders them BN-native via MediaRenderer::gallery().
-// Privacy (hide private from non-owners) is enforced inside the engine query.
-$user_media = array();
-if ( \BuddyNext\Media\MediaClient::available() ) {
-	$bn_media_viewer = get_current_user_id();
-	$user_media      = \BuddyNext\Media\Galleries::user_media_ids( $user_id, $bn_media_viewer, 24, 0 );
-}
-
-// Jetonomy discussions — the bridge owns all jt_* table access, so the template
-// never queries the partner's tables directly.
-$jt_discussions   = array();
+$user_media     = array();
+$jt_discussions = array();
 $show_discussions = class_exists( 'Jetonomy\Models\Post' );
-if ( $show_discussions ) {
-	$jt_discussions = ( new \BuddyNext\Bridges\JetonomyBridge() )->user_discussions( $user_id, 20 );
-}
 
 // --- Spaces, interests, completion, presence ------------------------------
 // Member's active spaces (id/name/slug/role) via the membership service, shared
@@ -394,7 +362,8 @@ $bn_pf_about_html = trim( (string) ob_get_clean() );
 // registry, so the rendered nav is consistent everywhere.
 //
 // The content-dependent "About" tab is registered here (only when there is
-// about content), demonstrating the public extension seam.
+// about content), demonstrating the public extension seam. The tab uses a
+// URL-based navigation (bn_profile_action) like all other profile tabs.
 if ( '' !== $bn_pf_about_html ) {
 	add_filter(
 		'buddynext_nav_items',
@@ -405,7 +374,7 @@ if ( '' !== $bn_pf_about_html ) {
 					'surface'  => 'profile',
 					'layer'    => 'primary',
 					'label'    => __( 'About', 'buddynext' ),
-					'tab'      => 'about',
+					'url'      => static fn( NavContext $c ): string => \BuddyNext\Core\PageRouter::profile_url( $c->subject_id ) . 'about/',
 					'priority' => 12,
 					'after'    => 'posts',
 				);
@@ -452,13 +421,61 @@ foreach ( $bn_pf_primary as $bn_pf_item ) {
 	}
 }
 
+// --- Tab-specific data loading (URL-based navigation) ---------------------
+// Only the active tab's data is fetched, matching the space surface pattern.
+// This replaces the previous approach of pre-rendering all panels.
+// $bn_feed_svc and $bn_post_svc are already resolved above.
+
+if ( 'posts' === $bn_pf_active_tab ) {
+	$recent_posts = $bn_feed_svc->profile_feed( $user_id, $current_user_id, null, 10 )['items'];
+}
+
+if ( 'replies' === $bn_pf_active_tab ) {
+	$user_replies = array_map(
+		static fn( array $r ): object => (object) $r,
+		$bn_post_svc->user_replies( $user_id, 20 )
+	);
+}
+
+if ( 'likes' === $bn_pf_active_tab ) {
+	$user_likes = $bn_post_svc->user_liked_posts( $user_id, 20 );
+}
+
+if ( 'scheduled' === $bn_pf_active_tab && $is_own_profile ) {
+	$scheduled_posts = $bn_post_svc->user_scheduled_posts( $user_id, 20 );
+}
+
+if ( 'media' === $bn_pf_active_tab && \BuddyNext\Media\MediaClient::available() ) {
+	$user_media = \BuddyNext\Media\Galleries::user_media_ids( $user_id, get_current_user_id(), 24, 0 );
+}
+
+if ( $show_discussions && in_array( $bn_pf_active_tab, array( 'discussions', 'posts' ), true ) ) {
+	$jt_discussions = ( new \BuddyNext\Bridges\JetonomyBridge() )->user_discussions( $user_id, 20 );
+}
+
+// Social-graph lists for the Followers / Following / Connections panels.
+$follower_users       = ( 'followers' === $bn_pf_active_tab )
+	? $bn_pf_ids_to_users( array_slice( $bn_follow_svc->followers( $user_id ), 0, 60 ) )
+	: array();
+$following_users      = ( 'following' === $bn_pf_active_tab )
+	? $bn_pf_ids_to_users( array_slice( $bn_follow_svc->following( $user_id ), 0, 60 ) )
+	: array();
+$connection_users     = ( 'connections' === $bn_pf_active_tab )
+	? $bn_pf_ids_to_users( $bn_conn_svc->connections( $user_id, 60, 0 ) )
+	: array();
+$pending_follow_users = ( 'followers' === $bn_pf_active_tab && $is_own_profile )
+	? $bn_pf_ids_to_users( $bn_follow_svc->pending_followers( $user_id ) )
+	: array();
+$pending_connection_users = ( 'connections' === $bn_pf_active_tab && $is_own_profile )
+	? $bn_pf_ids_to_users( $bn_conn_svc->pending_received( $user_id, 60, 0 ) )
+	: array();
+
 $bn_pf_ctx = array(
 	'userId'             => $user_id,
 	'profileUserId'      => $user_id,
 	'displayName'        => $display_name,
 	'peopleUrl'          => \BuddyNext\Core\PageRouter::people_url(),
 	'profileBaseUrl'     => \BuddyNext\Core\PageRouter::profile_url( (int) $user_id ),
-	'activeTab'          => $bn_pf_active_tab,
 	'isFollowing'        => $is_following,
 	'isConnected'        => $is_connected,
 	'connectionPending'  => $connection_pending,
@@ -479,7 +496,7 @@ $bn_pf_ctx = array(
 	'blockSubmitting'    => false,
 );
 ?>
-<div class="bn-pf-stack" data-wp-interactive="buddynext/profile" data-wp-init="callbacks.initView"
+<div class="bn-pf-stack" data-wp-interactive="buddynext/profile"
 	<?php echo wp_interactivity_data_wp_context( $bn_pf_ctx ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 >
 

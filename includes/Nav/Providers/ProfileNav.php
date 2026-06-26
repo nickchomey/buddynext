@@ -20,6 +20,7 @@ declare( strict_types=1 );
 
 namespace BuddyNext\Nav\Providers;
 
+use BuddyNext\Core\PageRouter;
 use BuddyNext\Media\Galleries;
 use BuddyNext\Media\MediaClient;
 use BuddyNext\Nav\NavContext;
@@ -55,8 +56,20 @@ final class ProfileNav {
 	}
 
 	/**
+	 * Clean-URL builder for a profile tab — /members/{slug}/{tab}/ (posts = the base).
+	 *
+	 * @param int    $user_id User ID.
+	 * @param string $tab     Tab slug ('' or 'posts' = the base/profile URL).
+	 * @return string
+	 */
+	private function tab_url( int $user_id, string $tab ): string {
+		$base = PageRouter::profile_url( $user_id );
+		return '' === $tab || 'posts' === $tab ? $base : $base . $tab . '/';
+	}
+
+	/**
 	 * The relationship metric row — display counts that deep-link to their list
-	 * panel (the panel reveal is driven by the same `activeTab` the tab sets).
+	 * panel via full URL navigation.
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
@@ -68,7 +81,7 @@ final class ProfileNav {
 				'layer'       => 'metric',
 				'label'       => __( 'Followers', 'buddynext' ),
 				'count_label' => static fn( int $n ): string => _n( 'Follower', 'Followers', $n, 'buddynext' ),
-				'tab'         => 'followers',
+				'url'         => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'followers' ),
 				'priority'    => 10,
 				'count'       => static fn( NavContext $c ): int => (int) buddynext_service( 'follows' )->follower_count( $c->subject_id ),
 			),
@@ -77,7 +90,7 @@ final class ProfileNav {
 				'surface'  => 'profile',
 				'layer'    => 'metric',
 				'label'    => __( 'Following', 'buddynext' ),
-				'tab'      => 'following',
+				'url'      => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'following' ),
 				'priority' => 20,
 				'count'    => static fn( NavContext $c ): int => (int) buddynext_service( 'follows' )->following_count( $c->subject_id ),
 			),
@@ -87,7 +100,7 @@ final class ProfileNav {
 				'layer'       => 'metric',
 				'label'       => __( 'Connections', 'buddynext' ),
 				'count_label' => static fn( int $n ): string => _n( 'Connection', 'Connections', $n, 'buddynext' ),
-				'tab'         => 'connections',
+				'url'         => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'connections' ),
 				'priority'    => 30,
 				'count'       => static fn( NavContext $c ): int => (int) buddynext_service( 'connections' )->connection_count( $c->subject_id ),
 			),
@@ -97,7 +110,8 @@ final class ProfileNav {
 	/**
 	 * The primary content tabs. Posts owns the post count (so the dedupe rule
 	 * drops any metric that would duplicate it). Scheduled is owner-only; Media
-	 * is gated on the media engine being active.
+	 * is gated on the media engine being active. Each tab is a full URL navigation
+	 * (not reactive in-page switching).
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
@@ -108,7 +122,7 @@ final class ProfileNav {
 				'surface'  => 'profile',
 				'layer'    => 'primary',
 				'label'    => __( 'Posts', 'buddynext' ),
-				'tab'      => 'posts',
+				'url'      => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'posts' ),
 				'priority' => 10,
 				'count'    => static fn( NavContext $c ): int => (int) buddynext_service( 'post_service' )->user_post_count( $c->subject_id ),
 			),
@@ -117,7 +131,7 @@ final class ProfileNav {
 				'surface'   => 'profile',
 				'layer'     => 'primary',
 				'label'     => __( 'Scheduled', 'buddynext' ),
-				'tab'       => 'scheduled',
+				'url'       => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'scheduled' ),
 				'priority'  => 15,
 				'after'     => 'posts',
 				'condition' => static fn( NavContext $c ): bool => $c->is_self(),
@@ -128,7 +142,7 @@ final class ProfileNav {
 				'surface'  => 'profile',
 				'layer'    => 'primary',
 				'label'    => __( 'Replies', 'buddynext' ),
-				'tab'      => 'replies',
+				'url'      => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'replies' ),
 				'priority' => 30,
 				'count'    => static fn( NavContext $c ): int => (int) buddynext_service( 'post_service' )->reply_count( $c->subject_id ),
 			),
@@ -137,7 +151,7 @@ final class ProfileNav {
 				'surface'   => 'profile',
 				'layer'     => 'primary',
 				'label'     => __( 'Media', 'buddynext' ),
-				'tab'       => 'media',
+				'url'       => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'media' ),
 				'priority'  => 40,
 				'condition' => static fn(): bool => MediaClient::available(),
 				'count'     => static fn( NavContext $c ): int => (int) Galleries::user_media_count( $c->subject_id, $c->viewer_id ),
@@ -147,7 +161,7 @@ final class ProfileNav {
 				'surface'  => 'profile',
 				'layer'    => 'primary',
 				'label'    => __( 'Likes', 'buddynext' ),
-				'tab'      => 'likes',
+				'url'      => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'likes' ),
 				'priority' => 50,
 				'count'    => static fn( NavContext $c ): int => (int) buddynext_service( 'post_service' )->reaction_count( $c->subject_id ),
 			),
@@ -156,10 +170,9 @@ final class ProfileNav {
 
 	/**
 	 * The "Network" primary tab and its one-level sub-nav (Connections /
-	 * Followers / Following). The parent defaults to the Connections sub-tab; the
+	 * Followers / Following). The parent links to the Connections sub-tab; the
 	 * relationship metric pills in the hero deep-link to the same sub-tab targets,
-	 * so the hero counts and this section stay in lockstep. The list panels these
-	 * sub-tabs reveal already exist (rendered by profile-tab-panel.php).
+	 * so the hero counts and this section stay in lockstep.
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
@@ -170,7 +183,7 @@ final class ProfileNav {
 				'surface'  => 'profile',
 				'layer'    => 'primary',
 				'label'    => __( 'Network', 'buddynext' ),
-				'tab'      => 'connections',
+				'url'      => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'connections' ),
 				'icon'     => 'users',
 				'priority' => 55,
 			),
@@ -180,8 +193,7 @@ final class ProfileNav {
 				'layer'    => 'primary',
 				'parent'   => 'network',
 				'label'    => __( 'Connections', 'buddynext' ),
-				'tab'      => 'connections',
-				'url'      => static fn( NavContext $c ): string => \BuddyNext\Core\PageRouter::profile_url( $c->subject_id ) . 'connections/',
+				'url'      => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'connections' ),
 				'priority' => 10,
 				'count'    => static fn( NavContext $c ): int => (int) buddynext_service( 'connections' )->connection_count( $c->subject_id ),
 			),
@@ -191,8 +203,7 @@ final class ProfileNav {
 				'layer'    => 'primary',
 				'parent'   => 'network',
 				'label'    => __( 'Followers', 'buddynext' ),
-				'tab'      => 'followers',
-				'url'      => static fn( NavContext $c ): string => \BuddyNext\Core\PageRouter::profile_url( $c->subject_id ) . 'followers/',
+				'url'      => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'followers' ),
 				'priority' => 20,
 				'count'    => static fn( NavContext $c ): int => (int) buddynext_service( 'follows' )->follower_count( $c->subject_id ),
 			),
@@ -202,8 +213,7 @@ final class ProfileNav {
 				'layer'    => 'primary',
 				'parent'   => 'network',
 				'label'    => __( 'Following', 'buddynext' ),
-				'tab'      => 'following',
-				'url'      => static fn( NavContext $c ): string => \BuddyNext\Core\PageRouter::profile_url( $c->subject_id ) . 'following/',
+				'url'      => fn( NavContext $c ): string => $this->tab_url( $c->subject_id, 'following' ),
 				'priority' => 30,
 				'count'    => static fn( NavContext $c ): int => (int) buddynext_service( 'follows' )->following_count( $c->subject_id ),
 			),

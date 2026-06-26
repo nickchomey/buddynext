@@ -4,9 +4,9 @@
  *
  * Registers the built-in navigation for the space surface into the NavRegistry,
  * the SAME way ProfileNav does — so member + space share one nav system, one
- * renderer, one active convention. Each tab carries a reactive `tab` slug AND a
- * lazy clean-URL `url` (e.g. /spaces/{slug}/members/) as the deep-link + no-JS
- * fallback, so spaces are consistent with profiles (clean URLs, no ?bn_tab=).
+ * renderer, one active convention. Space tabs are URL-only (clean
+ * /spaces/{slug}/{tab}/ links) — no reactive `tab` key. Profile tabs now use
+ * the same pattern.
  *
  * Role-gated items (Moderation) resolve against NavContext->role, which the
  * caller (spaces/home.php) populates with the viewer's space role.

@@ -2,10 +2,12 @@
 /**
  * BuddyNext template part: profile-tab-panel.
  *
- * Renders the tab-content container for the profile-view page. The
- * existing behavior renders all known panel shells (`posts`, `replies`,
- * `media`, `likes`, `discussions`) and lets the Interactivity API show
- * the active one via the `hidden` attribute on `[data-tab-panel]` nodes.
+ * Renders the tab-content container for the profile-view page. Only the
+ * active tab's panel is rendered server-side (URL-based navigation via
+ * `bn_profile_action`). Previously all panels were pre-rendered and the
+ * Interactivity API toggled visibility; now each panel is gated by a
+ * `<?php if ( 'slug' === $active_tab ) : ?>` PHP conditional.
+ *
  * The seam for bridge/Pro additions is `buddynext_part_profile_tab_panel_after`.
  *
  * @package BuddyNext
@@ -96,15 +98,9 @@ $bn_connections         = (array) $args['connection_users'];
 $bn_pending_follows     = (array) $args['pending_follow_users'];
 $bn_pending_connections = (array) $args['pending_connection_users'];
 
-// Reactive single-source visibility: each panel carries its own context
-// (tabSlug) and inherits the profile region's context.activeTab (seeded
-// server-side from the route action). The Interactivity getter
-// state.isActiveTab (c.activeTab === c.tabSlug) reveals exactly the active
-// panel via data-wp-bind--hidden="!state.isActiveTab" — deep links work on the
-// initial server render (activeTab is seeded), and tab clicks repaint reactively
-// without any DOM toggling. $bn_pf_panel_ctx builds the per-panel context JSON.
-$bn_pf_active    = (string) $args['active_tab'];
-$bn_pf_panel_ctx = static fn( string $bn_slug ): string => (string) wp_json_encode( array( 'tabSlug' => $bn_slug ) );
+// The active tab is determined from the URL (bn_profile_action). Only the
+// matching panel is rendered server-side (full URL navigation pattern).
+$bn_pf_active = (string) $args['active_tab'];
 
 do_action( 'buddynext_part_profile_tab_panel_before', $args );
 ?>
@@ -112,7 +108,8 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 		<div class="<?php echo esc_attr( $bn_class ); ?>">
 
 			<!-- Posts list (default tab) -->
-			<div class="bn-profile-posts-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'posts' ) ); ?>" data-tab-panel="posts" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'posts' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'posts' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'posts' === $bn_pf_active ) : ?>
+			<div class="bn-profile-posts-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'posts' ) ); ?>" data-tab-panel="posts">
 			<?php if ( $bn_pf_is_owner ) : ?>
 				<?php
 				// Profile owner can post directly from their activity tab — the same
@@ -162,10 +159,11 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 				</div>
 			<?php endif; ?>
 			</div><!-- /.bn-profile-posts-panel -->
+			<?php endif; ?>
 
 			<!-- Scheduled tab content — owner-only; the member's queued future posts. -->
-			<?php if ( $bn_pf_is_owner ) : ?>
-			<div class="bn-profile-tab-panel bn-profile-scheduled-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'scheduled' ) ); ?>" data-tab-panel="scheduled" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'scheduled' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'scheduled' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'scheduled' === $bn_pf_active && $bn_pf_is_owner ) : ?>
+			<div class="bn-profile-tab-panel bn-profile-scheduled-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'scheduled' ) ); ?>" data-tab-panel="scheduled">
 				<?php if ( $bn_scheduled_posts ) : ?>
 					<?php
 					foreach ( $bn_scheduled_posts as $bn_sched_post ) {
@@ -192,14 +190,15 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 			<?php endif; ?>
 
 			<!-- About tab content — profile details, moved out of the always-on column. -->
-			<?php if ( '' !== $bn_pf_about_html ) : ?>
-			<div class="bn-profile-tab-panel bn-pf-about-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'about' ) ); ?>" data-tab-panel="about" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'about' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'about' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'about' === $bn_pf_active && '' !== $bn_pf_about_html ) : ?>
+			<div class="bn-profile-tab-panel bn-pf-about-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'about' ) ); ?>" data-tab-panel="about">
 				<?php echo $bn_pf_about_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- pre-rendered about-cards markup; escaped at source by the FieldType engine + esc_html(). ?>
 			</div>
 			<?php endif; ?>
 
 			<!-- Replies tab content -->
-			<div class="bn-profile-tab-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'replies' ) ); ?>" data-tab-panel="replies" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'replies' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'replies' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'replies' === $bn_pf_active ) : ?>
+			<div class="bn-profile-tab-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'replies' ) ); ?>" data-tab-panel="replies">
 				<?php if ( $bn_user_replies ) : ?>
 					<?php
 					foreach ( $bn_user_replies as $reply ) :
@@ -225,9 +224,11 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 					</div>
 				<?php endif; ?>
 			</div>
+			<?php endif; ?>
 
 			<!-- Media tab content -->
-			<div class="bn-profile-tab-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'media' ) ); ?>" data-tab-panel="media" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'media' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'media' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'media' === $bn_pf_active ) : ?>
+			<div class="bn-profile-tab-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'media' ) ); ?>" data-tab-panel="media">
 				<?php
 				// Full media surface: Media | Albums sub-nav, the owner upload
 				// composer + gallery, and the albums UI (cards/create/detail/picker).
@@ -242,9 +243,11 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 				);
 				?>
 			</div>
+			<?php endif; ?>
 
 			<!-- Likes tab content -->
-			<div class="bn-profile-tab-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'likes' ) ); ?>" data-tab-panel="likes" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'likes' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'likes' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'likes' === $bn_pf_active ) : ?>
+			<div class="bn-profile-tab-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'likes' ) ); ?>" data-tab-panel="likes">
 				<?php if ( $bn_user_likes ) : ?>
 					<?php
 					// Render each liked post through the full post-card partial so the
@@ -272,10 +275,11 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 					</div>
 				<?php endif; ?>
 			</div>
+			<?php endif; ?>
 
 			<!-- Discussions tab content (Jetonomy) -->
-			<?php if ( (bool) $args['show_discussions'] ) : ?>
-			<div class="bn-profile-tab-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'discussions' ) ); ?>" data-tab-panel="discussions" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'discussions' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'discussions' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'discussions' === $bn_pf_active && (bool) $args['show_discussions'] ) : ?>
+			<div class="bn-profile-tab-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'discussions' ) ); ?>" data-tab-panel="discussions">
 				<?php if ( $bn_jt_disc ) : ?>
 					<?php
 					foreach ( $bn_jt_disc as $disc ) :
@@ -314,7 +318,8 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 			<?php endif; ?>
 
 			<!-- Followers tab content -->
-			<div class="bn-profile-tab-panel bn-pf-people-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'followers' ) ); ?>" data-tab-panel="followers" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'followers' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'followers' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'followers' === $bn_pf_active ) : ?>
+			<div class="bn-profile-tab-panel bn-pf-people-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'followers' ) ); ?>" data-tab-panel="followers">
 				<?php if ( ! empty( $bn_pending_follows ) ) : ?>
 					<section class="bn-follow-requests" aria-label="<?php esc_attr_e( 'Pending follow requests', 'buddynext' ); ?>">
 						<header class="bn-follow-requests__head">
@@ -390,9 +395,11 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 					</div>
 				<?php endif; ?>
 			</div>
+			<?php endif; ?>
 
 			<!-- Following tab content -->
-			<div class="bn-profile-tab-panel bn-pf-people-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'following' ) ); ?>" data-tab-panel="following" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'following' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'following' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'following' === $bn_pf_active ) : ?>
+			<div class="bn-profile-tab-panel bn-pf-people-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'following' ) ); ?>" data-tab-panel="following">
 				<?php if ( ! empty( $bn_following ) ) : ?>
 					<?php
 					buddynext_get_template(
@@ -418,9 +425,11 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 					</div>
 				<?php endif; ?>
 			</div>
+			<?php endif; ?>
 
 			<!-- Connections tab content -->
-			<div class="bn-profile-tab-panel bn-pf-people-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'connections' ) ); ?>" data-tab-panel="connections" data-wp-context='<?php echo esc_attr( $bn_pf_panel_ctx( 'connections' ) ); ?>' data-wp-bind--hidden="!state.isActiveTab" <?php echo 'connections' === $bn_pf_active ? '' : 'hidden'; ?>>
+			<?php if ( 'connections' === $bn_pf_active ) : ?>
+			<div class="bn-profile-tab-panel bn-pf-people-panel" id="<?php echo esc_attr( buddynext_nav_panel_id( 'connections' ) ); ?>" data-tab-panel="connections">
 				<?php if ( ! empty( $bn_pending_connections ) ) : ?>
 					<section class="bn-follow-requests" aria-label="<?php esc_attr_e( 'Pending connection requests', 'buddynext' ); ?>">
 						<header class="bn-follow-requests__head">
@@ -496,6 +505,7 @@ do_action( 'buddynext_part_profile_tab_panel_before', $args );
 					</div>
 				<?php endif; ?>
 			</div>
+			<?php endif; ?>
 
 		</div><!-- /.bn-pf-tab-content -->
 <?php
